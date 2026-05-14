@@ -227,6 +227,21 @@ header{
 .view-tab-btn:last-child{border-right:none;}
 .view-tab-btn.active{background:var(--navy);color:#fff;}
 .view-tab-btn:hover:not(.active){background:var(--surface2);color:var(--text);}
+
+/* Option C task row */
+.task-row{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;cursor:default;transition:background 0.12s,opacity 0.15s;user-select:none;border-left:3px solid transparent;}
+.task-row:hover{background:var(--surface2);border-left-color:var(--navy);}
+.task-row.done{opacity:0.45;}
+.task-row.done .task-name{text-decoration:line-through;color:var(--text2);}
+.time-badge{display:flex;flex-direction:column;align-items:center;justify-content:center;background:#FAEEDA;border-radius:6px;padding:4px 8px;min-width:68px;flex-shrink:0;}
+.time-badge-day{font-size:10px;font-weight:700;color:#BA7517;letter-spacing:0.04em;text-transform:uppercase;line-height:1.2;}
+.time-badge-time{font-size:13px;font-weight:600;color:#633806;line-height:1.3;}
+.time-badge-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--surface2);border-radius:6px;padding:4px 8px;min-width:68px;flex-shrink:0;}
+.time-badge-day-empty{font-size:10px;font-weight:700;color:#BA7517;letter-spacing:0.04em;text-transform:uppercase;line-height:1.2;}
+.time-badge-due-empty{font-size:11px;font-weight:500;color:var(--text3);line-height:1.3;}
+.task-row.done .time-badge{background:var(--surface2);opacity:0.7;}
+.task-row.done .time-badge-day{color:var(--text3);}
+.task-row.done .time-badge-time{color:var(--text3);}
 @media print{
   header,.tab-bar,.add-card,.toolbar,.hdr-btn,.delete-btn,.info-btn,.manage-grid,.cal-header,#login-screen{display:none!important;}
   body{background:#fff;}
@@ -299,6 +314,7 @@ header{
     <button class="view-tab-btn active" onclick="setViewTab('today')">Today</button>
     <button class="view-tab-btn" onclick="setViewTab('week')">This Week</button>
     <button class="view-tab-btn" onclick="setViewTab('all')">All</button>
+    <button class="view-tab-btn" onclick="setViewTab('completed')">Completed</button>
   </div>
   <div class="section-head"><h2 id="open-label">Open</h2><div class="section-line"></div></div>
   <div class="task-list" id="open-list"><div class="loading">Loading tasks...</div></div>
@@ -771,7 +787,9 @@ function toggleRecur() {
 function setViewTab(tab) {
   viewTab=tab;
   document.querySelectorAll('.view-tab-btn').forEach(b=>{
-    b.classList.toggle('active',b.textContent.toLowerCase().replace(/\s/g,'').includes(tab==='today'?'today':tab==='week'?'week':'all'));
+    const t=b.textContent.toLowerCase().trim();
+    const match=(tab==='today'&&t==='today')||(tab==='week'&&t==='this week')||(tab==='all'&&t==='all')||(tab==='completed'&&t==='completed');
+    b.classList.toggle('active',match);
   });
   render();
 }
@@ -806,17 +824,48 @@ function populateFormSelects() {
   if(curD&&depts.includes(curD)) deptSel.value=curD;
 }
 
+function formatTime12(t) {
+  if(!t) return '';
+  const parts = t.split(':');
+  let h = parseInt(parts[0]);
+  const m = parts[1] || '00';
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
+
 function taskRowHTML(t) {
   const due=formatDue(t.due);
   const hasInfo=t.info&&t.info.trim();
+  const timeStr=formatTime12(t.time);
+  const dayLabel=due?due.label:'';
+
+  // Build time badge
+  let badgeHTML='';
+  if(timeStr) {
+    badgeHTML=`<div class="time-badge${t.done?' done':''}">
+      <span class="time-badge-day">${escHTML(dayLabel)}</span>
+      <span class="time-badge-time">${escHTML(timeStr)}</span>
+    </div>`;
+  } else if(due) {
+    badgeHTML=`<div class="time-badge-empty">
+      <span class="time-badge-day-empty">${escHTML(dayLabel)}</span>
+      <span class="time-badge-due-empty">No time</span>
+    </div>`;
+  } else {
+    badgeHTML=`<div class="time-badge-empty">
+      <span class="time-badge-day-empty">—</span>
+      <span class="time-badge-due-empty">No date</span>
+    </div>`;
+  }
+
   return `<div class="task-wrapper" id="wrapper-${t.id}">
     <div class="task-row${t.done?' done':''}" onclick="handleTaskClick(${t.id})" title="Double-click to complete">
       <div class="cb"><svg class="check-icon" viewBox="0 0 10 8"><polyline points="1,4 4,7 9,1"/></svg></div>
+      ${badgeHTML}
       <span class="task-name">${escHTML(t.name)}</span>
       <div class="task-right">
         <span class="dbl-hint">double-click to complete</span>
-        ${due?`<span class="due-lbl ${due.cls}">${due.label}</span>`:''}
-        ${t.time?`<span class="time-lbl">${t.time}</span>`:''}
         ${t.recur?`<span class="recur-icon" title="${t.freq}">↻</span>`:''}
         ${t.dept?`<span class="dept-tag" style="${getDeptStyle(t.dept)}">${escHTML(t.dept)}</span>`:''}
         ${tagHTML(t.cat)}
@@ -840,47 +889,58 @@ function render() {
     return true;
   });
 
-  const open=visible.filter(t=>{
-    if(t.done) return false;
-    if(viewTab==='today'){
-      return t.due===todayStr;
-    } else if(viewTab==='week'){
-      if(!t.due) return false;
-      const parts=t.due.split('-');
-      const td=new Date(parseInt(parts[0]),parseInt(parts[1])-1,parseInt(parts[2]));
-      return td>=today0()&&td<=weekEnd;
-    } else {
-      // All — show non-overdue, non-done
-      if(!t.due) return true;
-      return daysFromNow(t.due)>=0;
-    }
-  }).sort((a,b)=>{
-    // Sort chronologically by date then time
+  const chronoSort=(a,b)=>{
     if(!a.due&&!b.due) return 0;
     if(!a.due) return 1;
     if(!b.due) return -1;
     if(a.due!==b.due) return new Date(a.due)-new Date(b.due);
-    // Same date — sort by time
     if(!a.time&&!b.time) return 0;
     if(!a.time) return 1;
     if(!b.time) return -1;
     return a.time.localeCompare(b.time);
-  });
+  };
 
-  const done=visible.filter(t=>t.done);
+  let open=[];
+  let done=[];
 
-  // Update open label
+  if(viewTab==='completed') {
+    done=visible.filter(t=>t.done).sort(chronoSort);
+  } else {
+    open=visible.filter(t=>{
+      if(t.done) return false;
+      if(viewTab==='today'){
+        return t.due===todayStr;
+      } else if(viewTab==='week'){
+        if(!t.due) return false;
+        const parts=t.due.split('-');
+        const td=new Date(parseInt(parts[0]),parseInt(parts[1])-1,parseInt(parts[2]));
+        return td>=today0()&&td<=weekEnd;
+      } else {
+        if(!t.due) return true;
+        return daysFromNow(t.due)>=0;
+      }
+    }).sort(chronoSort);
+    done=[];
+  }
+
   const labelEl=document.getElementById('open-label');
   if(labelEl){
     if(viewTab==='today') labelEl.textContent='Today';
     else if(viewTab==='week') labelEl.textContent='This Week';
+    else if(viewTab==='completed') labelEl.textContent='Completed';
     else labelEl.textContent='All Upcoming';
   }
   document.getElementById('open-list').innerHTML=open.length?open.map(taskRowHTML).join(''):'<div class="empty">No open tasks — nice work.</div>';
   const doneEl=document.getElementById('done-list');
   const doneHead=document.getElementById('done-head');
-  if(done.length){ doneHead.style.display=''; doneEl.innerHTML=done.map(taskRowHTML).join(''); }
-  else { doneHead.style.display='none'; doneEl.innerHTML=''; }
+  if(viewTab==='completed'){
+    doneHead.style.display='none';
+    doneEl.innerHTML=done.length?done.map(taskRowHTML).join(''):'<div class="empty">No completed tasks yet.</div>';
+  } else if(done.length){
+    doneHead.style.display=''; doneEl.innerHTML=done.map(taskRowHTML).join('');
+  } else {
+    doneHead.style.display='none'; doneEl.innerHTML='';
+  }
   const total=tasks.filter(t=>!t.done).length;
   const overdue=tasks.filter(t=>!t.done&&t.due&&daysFromNow(t.due)<0).length;
   const dueToday=tasks.filter(t=>!t.done&&t.due&&daysFromNow(t.due)===0).length;
