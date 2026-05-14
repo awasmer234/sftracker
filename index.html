@@ -460,20 +460,17 @@ const WK = 'signfab_webhook';
 // ── LOGIN ──
 async function checkLogin() {
   const pass = document.getElementById('login-pass').value;
-  const stored = localStorage.getItem('sfpass');
-  if (stored && pass === atob(stored)) {
+  // Hash the input and compare to stored hash
+  const encoder = new TextEncoder();
+  const data = encoder.encode(pass);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  if(hashHex === 'ba431b6a1a7d779120898e44f19a099f9c2c42abf69678612a983aac506af764') {
     showApp();
-    return;
+  } else {
+    document.getElementById('login-error').style.display = 'block';
   }
-  // Check against hardcoded hash approach - store on first correct entry
-  // For simplicity store password as base64 on first login
-  if (!stored) {
-    // First time - any password sets it
-    localStorage.setItem('sfpass', btoa(pass));
-    showApp();
-    return;
-  }
-  document.getElementById('login-error').style.display = 'block';
 }
 
 function showApp() {
@@ -482,12 +479,9 @@ function showApp() {
   init();
 }
 
-// Check if already logged in
+// Always show login screen on load
 window.addEventListener('load', () => {
-  const stored = localStorage.getItem('sfpass');
-  if (stored) {
-    // Still show login screen for security
-  }
+  document.getElementById('login-pass').focus();
 });
 
 // ── SUPABASE HELPERS ──
