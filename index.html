@@ -482,32 +482,35 @@ async function loadTasks() {
 
 async function saveTask(task) {
   try {
+    const body = {
+      name: task.name || '',
+      cat: task.cat || 'check-in',
+      dept: task.dept || '',
+      due: task.due || null,
+      time: task.time || '',
+      info: task.info || '',
+      done: task.done || false,
+      recur: task.recur || false,
+      freq: task.freq || ''
+    };
     if (task.id && typeof task.id === 'number') {
       await sbFetch(`${TABLE}?id=eq.${task.id}`, {
         method: 'PATCH',
         prefer: 'return=representation',
-        body: JSON.stringify({
-          name: task.name, cat: task.cat, dept: task.dept,
-          due: task.due, time: task.time, info: task.info,
-          done: task.done, recur: task.recur, freq: task.freq,
-          tracker_id: task.tracker_id || task.id
-        })
+        body: JSON.stringify(body)
       });
     } else {
       const result = await sbFetch(`${TABLE}`, {
         method: 'POST',
         prefer: 'return=representation',
-        body: JSON.stringify({
-          name: task.name, cat: task.cat, dept: task.dept,
-          due: task.due, time: task.time, info: task.info,
-          done: task.done, recur: task.recur, freq: task.freq,
-          tracker_id: Date.now()
-        })
+        body: JSON.stringify(body)
       });
-      if (result && result[0]) task.id = result[0].id;
+      if (Array.isArray(result) && result[0]) task.id = result[0].id;
+      else if (result && result.id) task.id = result.id;
     }
   } catch(e) {
-    console.error('Save error:', e);
+    console.error('Save error:', e.message);
+    alert('Could not save task: ' + e.message);
   }
 }
 
@@ -639,10 +642,9 @@ async function addTask() {
     recur: document.getElementById('recur-toggle').checked,
     freq: document.getElementById('recur-toggle').checked ? document.getElementById('recur-freq').value : ''
   };
-  await saveTask(newTask);
-  tasks.push(newTask);
   document.getElementById('new-name').value='';
   document.getElementById('new-info').value='';
+  await saveTask(newTask);
   await loadTasks();
 }
 
