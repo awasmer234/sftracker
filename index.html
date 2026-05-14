@@ -536,24 +536,62 @@ async function deleteTaskFromDB(id) {
 }
 
 // ── DEFAULTS ──
-function defaultCategories() {
-  const stored = localStorage.getItem(SK_CAT);
-  if (stored) return JSON.parse(stored);
-  return [
-    { id:'check-in',    label:'Check-in',    bg:'#eaf1fb', fg:'#154e87' },
-    { id:'deadline',    label:'Deadline',    bg:'#fef7e6', fg:'#7a5200' },
-    { id:'follow-up',   label:'Follow-up',   bg:'#f0eefb', fg:'#4a3b8c' },
-    { id:'maintenance', label:'Maintenance', bg:'#eaf5ee', fg:'#1a6640' },
-  ];
+const DEFAULT_CATS = [
+  { id:'check-in',    label:'Check-in',    bg:'#eaf1fb', fg:'#154e87' },
+  { id:'deadline',    label:'Deadline',    bg:'#fef7e6', fg:'#7a5200' },
+  { id:'follow-up',   label:'Follow-up',   bg:'#f0eefb', fg:'#4a3b8c' },
+  { id:'maintenance', label:'Maintenance', bg:'#eaf5ee', fg:'#1a6640' },
+];
+const DEFAULT_DEPTS = ['P1 - Paint','P1 - Vinyl','P1 - Router','P1 - Weld','P2 - Assembly','P2 - Electrical','All Depts'];
+
+async function loadCategories() {
+  try {
+    const data = await sbFetch('categories?order=id.asc');
+    if(Array.isArray(data) && data.length > 0) {
+      categories = data.map(c => ({ id: c.cat_id, label: c.label, bg: c.bg, fg: c.fg, dbId: c.id }));
+    } else {
+      // Seed defaults into Supabase
+      categories = DEFAULT_CATS;
+      for(const c of DEFAULT_CATS) {
+        await sbFetch('categories', {
+          method: 'POST',
+          prefer: 'return=representation',
+          body: JSON.stringify({ cat_id: c.id, label: c.label, bg: c.bg, fg: c.fg })
+        });
+      }
+      await loadCategories();
+    }
+  } catch(e) {
+    console.error('Load categories error:', e.message);
+    categories = DEFAULT_CATS;
+  }
 }
-function defaultDepts() {
-  const stored = localStorage.getItem(SK_DEPT);
-  if (stored) return JSON.parse(stored);
-  return ['P1 - Paint','P1 - Vinyl','P1 - Router','P1 - Weld','P2 - Assembly','P2 - Electrical','All Depts'];
+
+async function loadDepts() {
+  try {
+    const data = await sbFetch('departments?order=id.asc');
+    if(Array.isArray(data) && data.length > 0) {
+      depts = data.map(d => d.name);
+    } else {
+      // Seed defaults
+      depts = DEFAULT_DEPTS;
+      for(const name of DEFAULT_DEPTS) {
+        await sbFetch('departments', {
+          method: 'POST',
+          prefer: 'return=representation',
+          body: JSON.stringify({ name })
+        });
+      }
+      await loadDepts();
+    }
+  } catch(e) {
+    console.error('Load depts error:', e.message);
+    depts = DEFAULT_DEPTS;
+  }
 }
+
 function saveLocal() {
-  localStorage.setItem(SK_CAT, JSON.stringify(categories));
-  localStorage.setItem(SK_DEPT, JSON.stringify(depts));
+  // No longer needed — everything in Supabase
 }
 
 // ── DATE HELPERS ──
@@ -599,10 +637,38 @@ function offsetDate(n) {
 }
 
 // ── CATEGORY HELPERS ──
-function getCat(id) { return categories.find(c=>c.id===id)||{label:id,bg:'#eee',fg:'#333'}; }
+function getCat(id) {
+  const found = categories.find(c=>c.id===id);
+  if(found) return found;
+  // Clean up auto-generated IDs for display
+  if(id && id.startsWith('cat_')) {
+    const clean = id.replace(/^cat_/,'').replace(/_\d+$/,'').replace(/_/g,' ');
+    const label = clean.charAt(0).toUpperCase() + clean.slice(1);
+    return {label, bg:'#eef1f8', fg:'#3a4a6a'};
+  }
+  return {label: id || 'Unknown', bg:'#eef1f8', fg:'#3a4a6a'};
+}
 function tagHTML(catId) {
   const c=getCat(catId);
   return `<span class="tag" style="background:${c.bg};color:${c.fg};">${c.label}</span>`;
+}
+
+const DEPT_COLORS = [
+  {bg:'#eaf1fb',fg:'#154e87'},
+  {bg:'#fef7e6',fg:'#7a5200'},
+  {bg:'#f0eefb',fg:'#4a3b8c'},
+  {bg:'#eaf5ee',fg:'#1a6640'},
+  {bg:'#fdf0ee',fg:'#8b2500'},
+  {bg:'#e8f8f5',fg:'#0e6655'},
+  {bg:'#fef9e7',fg:'#7d6608'},
+  {bg:'#f5eef8',fg:'#6c3483'},
+];
+function getDeptStyle(dept) {
+  if(!dept) return '';
+  let hash=0;
+  for(let i=0;i<dept.length;i++) hash=(hash<<5)-hash+dept.charCodeAt(i);
+  const c=DEPT_COLORS[Math.abs(hash)%DEPT_COLORS.length];
+  return `background:${c.bg};color:${c.fg};border-color:${c.bg};`;
 }
 
 // ── DOUBLE CLICK TO COMPLETE ──
@@ -752,7 +818,7 @@ function taskRowHTML(t) {
         ${due?`<span class="due-lbl ${due.cls}">${due.label}</span>`:''}
         ${t.time?`<span class="time-lbl">${t.time}</span>`:''}
         ${t.recur?`<span class="recur-icon" title="${t.freq}">↻</span>`:''}
-        ${t.dept?`<span class="dept-tag">${escHTML(t.dept)}</span>`:''}
+        ${t.dept?`<span class="dept-tag" style="${getDeptStyle(t.dept)}">${escHTML(t.dept)}</span>`:''}
         ${tagHTML(t.cat)}
         ${!t.done?`<button class="info-btn" id="info-btn-${t.id}" onclick="toggleInfo(${t.id},event)">▼ Info</button>`:''}
         <button class="delete-btn" onclick="deleteTask(${t.id},event)" title="Delete">×</button>
@@ -832,8 +898,9 @@ function render() {
 function renderManage() {
   document.getElementById('cat-list').innerHTML=categories.map(c=>`
     <div class="manage-item">
-      <div class="manage-item-color" style="background:${c.fg}"></div>
+      <div class="manage-item-color" style="background:${c.fg};border-radius:3px;"></div>
       <span class="manage-item-name">${escHTML(c.label)}</span>
+      <span class="tag" style="background:${c.bg};color:${c.fg};margin-left:4px;">${escHTML(c.label)}</span>
       <button class="manage-item-del" onclick="deleteCategory('${c.id}')">×</button>
     </div>`).join('');
   document.getElementById('dept-list').innerHTML=depts.map(d=>`
@@ -842,31 +909,61 @@ function renderManage() {
       <button class="manage-item-del" onclick="deleteDept('${escAttr(d)}')">×</button>
     </div>`).join('');
 }
-function addCategory() {
+async function addCategory() {
   const name=document.getElementById('new-cat-name').value.trim();
   if(!name) return;
   const color=document.getElementById('new-cat-color').value;
-  const id='cat_'+name.toLowerCase().replace(/\s+/g,'_')+'_'+Date.now();
+  const id='cat_'+name.toLowerCase().replace(/[^a-z0-9]/g,'_')+'_'+Date.now();
   const bg=hexToLight(color);
-  categories.push({id,label:name,bg,fg:color});
+  try {
+    const result = await sbFetch('categories', {
+      method: 'POST',
+      prefer: 'return=representation',
+      body: JSON.stringify({ cat_id: id, label: name, bg, fg: color })
+    });
+    const dbId = Array.isArray(result) && result[0] ? result[0].id : null;
+    categories.push({id, label:name, bg, fg:color, dbId});
+  } catch(e) {
+    console.error('Add category error:', e.message);
+  }
   document.getElementById('new-cat-name').value='';
-  saveLocal(); render();
+  render();
 }
-function deleteCategory(id) {
+async function deleteCategory(id) {
   if(categories.length<=1){alert('Need at least one category.');return;}
+  const cat = categories.find(c=>c.id===id);
+  if(cat && cat.dbId) {
+    try {
+      await sbFetch(`categories?id=eq.${cat.dbId}`, { method: 'DELETE', prefer: '' });
+    } catch(e) { console.error('Delete category error:', e.message); }
+  }
   categories=categories.filter(c=>c.id!==id);
-  saveLocal(); render();
+  render();
 }
-function addDept() {
+async function addDept() {
   const name=document.getElementById('new-dept-name').value.trim();
   if(!name||depts.includes(name)) return;
-  depts.push(name);
+  try {
+    await sbFetch('departments', {
+      method: 'POST',
+      prefer: 'return=representation',
+      body: JSON.stringify({ name })
+    });
+    depts.push(name);
+  } catch(e) {
+    console.error('Add dept error:', e.message);
+  }
   document.getElementById('new-dept-name').value='';
-  saveLocal(); render();
+  render();
 }
-function deleteDept(name) {
-  depts=depts.filter(d=>d!==name);
-  saveLocal(); render();
+async function deleteDept(name) {
+  try {
+    await sbFetch(`departments?name=eq.${encodeURIComponent(name)}`, { method: 'DELETE', prefer: '' });
+    depts=depts.filter(d=>d!==name);
+  } catch(e) {
+    console.error('Delete dept error:', e.message);
+  }
+  render();
 }
 function hexToLight(hex) {
   let r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
@@ -950,12 +1047,11 @@ function escHTML(s){ if(!s) return ''; return String(s).replace(/&/g,'&amp;').re
 function escAttr(s){ return escHTML(s); }
 
 // ── INIT ──
-function init() {
-  // Initialize categories and depts first
-  categories = defaultCategories();
-  depts = defaultDepts();
+async function init() {
   document.getElementById('header-date').textContent=new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
   document.getElementById('new-date').value=offsetDate(1);
+  // Load categories and depts from Supabase first, then tasks
+  await Promise.all([loadCategories(), loadDepts()]);
   loadTasks();
 }
 </script>
