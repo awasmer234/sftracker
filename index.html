@@ -242,6 +242,25 @@ header{
 .task-row.done .time-badge{background:var(--surface2);opacity:0.7;}
 .task-row.done .time-badge-day{color:var(--text3);}
 .task-row.done .time-badge-time{color:var(--text3);}
+/* drag styles */
+.task-row{touch-action:pan-y;}
+.task-row.drag-left{background:#FCEBEB!important;border-left-color:#E24B4A!important;transform:translateX(-18px);}
+.task-row.drag-right{background:#E1F5EE!important;border-left-color:#1D9E75!important;transform:translateX(18px);}
+.drag-feedback{display:none;margin-top:2px;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:500;align-items:center;gap:5px;}
+.drag-feedback.show{display:flex;}
+.drag-feedback.del{background:#FCEBEB;color:#A32D2D;}
+.drag-feedback.push{background:#E1F5EE;color:#0F6E56;}
+
+/* edit panel */
+.edit-panel{display:none;background:#0a2463;border-radius:0 0 var(--radius) var(--radius);border:1px solid var(--navy-light);border-top:none;padding:10px 14px;}
+.edit-panel.open{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.edit-panel input{font-size:12px;padding:5px 9px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.1);color:#fff;outline:none;font-family:var(--font);}
+.edit-panel input:focus{border-color:rgba(255,255,255,0.5);background:rgba(255,255,255,0.15);}
+.edit-save{font-size:12px;font-weight:600;padding:5px 14px;border-radius:6px;border:none;background:#e8ad30;color:#412402;cursor:pointer;font-family:var(--font);}
+.edit-cancel{font-size:12px;padding:5px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:transparent;color:rgba(255,255,255,0.6);cursor:pointer;font-family:var(--font);}
+.time-badge{cursor:pointer;}
+.time-badge:hover{background:#FAC775!important;}
+
 @media print{
   header,.tab-bar,.add-card,.toolbar,.hdr-btn,.delete-btn,.info-btn,.manage-grid,.cal-header,#login-screen{display:none!important;}
   body{background:#fff;}
@@ -688,7 +707,16 @@ function getDeptStyle(dept) {
 }
 
 // ── DOUBLE CLICK TO COMPLETE ──
-function handleTaskClick(id) {
+function handleTaskClick(id, e) {
+  // Ignore clicks that came from the badge, info btn, delete btn, or edit panel
+  if(e && (
+    e.target.closest('.time-badge') ||
+    e.target.closest('.time-badge-empty') ||
+    e.target.closest('.info-btn') ||
+    e.target.closest('.delete-btn') ||
+    e.target.closest('.edit-panel')
+  )) return;
+
   if(clickTimers[id]) {
     clearTimeout(clickTimers[id]);
     delete clickTimers[id];
@@ -859,10 +887,32 @@ function taskRowHTML(t) {
     </div>`;
   }
 
+  // Build badge with double-click edit trigger
+  let badgeWithEdit = '';
+  if(timeStr) {
+    badgeWithEdit=`<div class="time-badge" ondblclick="openEditPanel(${t.id},event)" title="Double-click to edit date/time">
+      <span class="time-badge-day">${escHTML(dayLabel)}</span>
+      <span class="time-badge-time">${escHTML(timeStr)}</span>
+    </div>`;
+  } else if(due) {
+    badgeWithEdit=`<div class="time-badge-empty" ondblclick="openEditPanel(${t.id},event)" title="Double-click to edit date/time">
+      <span class="time-badge-day-empty">${escHTML(dayLabel)}</span>
+      <span class="time-badge-due-empty">No time</span>
+    </div>`;
+  } else {
+    badgeWithEdit=`<div class="time-badge-empty" ondblclick="openEditPanel(${t.id},event)" title="Double-click to edit date/time">
+      <span class="time-badge-day-empty">—</span>
+      <span class="time-badge-due-empty">No date</span>
+    </div>`;
+  }
+
   return `<div class="task-wrapper" id="wrapper-${t.id}">
-    <div class="task-row${t.done?' done':''}" onclick="handleTaskClick(${t.id})" title="Double-click to complete">
+    <div class="task-row${t.done?' done':''}" id="row-${t.id}"
+      onclick="handleTaskClick(${t.id},event)"
+      onmousedown="startDrag(event,${t.id})"
+      title="Double-click to complete · Drag left to delete · Drag right to push +24h">
       <div class="cb"><svg class="check-icon" viewBox="0 0 10 8"><polyline points="1,4 4,7 9,1"/></svg></div>
-      ${badgeHTML}
+      ${badgeWithEdit}
       <span class="task-name">${escHTML(t.name)}</span>
       <div class="task-right">
         <span class="dbl-hint">double-click to complete</span>
@@ -873,7 +923,15 @@ function taskRowHTML(t) {
         <button class="delete-btn" onclick="deleteTask(${t.id},event)" title="Delete">×</button>
       </div>
     </div>
+    <div class="drag-feedback del" id="drag-del-${t.id}">Release to delete</div>
+    <div class="drag-feedback push" id="drag-push-${t.id}">Release to push +24 hours</div>
     ${!t.done?`<div class="task-info-drop${hasInfo?'':' empty'}" id="info-drop-${t.id}">${hasInfo?escHTML(t.info):'No task information added.'}</div>`:''}
+    <div class="edit-panel" id="edit-panel-${t.id}">
+      <input type="date" id="edit-date-${t.id}" value="${t.due||''}"/>
+      <input type="time" id="edit-time-${t.id}" value="${t.time||''}"/>
+      <button class="edit-save" onclick="saveEdit(${t.id},event)">Save</button>
+      <button class="edit-cancel" onclick="closeEditPanel(${t.id},event)">Cancel</button>
+    </div>
   </div>`;
 }
 
@@ -1100,6 +1158,133 @@ async function saveAndSync() {
   } catch(e){ status.textContent='Sync failed — check URL'; status.className='sync-status err'; }
   btn.disabled=false; btn.innerHTML='Sync Reminders';
   setTimeout(()=>status.className='sync-status',4000);
+}
+
+// ── DRAG TO DELETE / PUSH ──
+let dragState = null;
+
+function startDrag(e, id) {
+  if(e.target.classList.contains('delete-btn') ||
+     e.target.classList.contains('info-btn') ||
+     e.target.closest('.time-badge') ||
+     e.target.closest('.time-badge-empty') ||
+     e.target.closest('.edit-panel')) return;
+
+  const startX = e.clientX || (e.touches && e.touches[0].clientX);
+  const row = document.getElementById('row-'+id);
+  if(!row) return;
+
+  let dragging = false;
+  let lastDx = 0;
+  dragState = { id, startX, dragging: false };
+
+  function getX(ev) { return ev.clientX || (ev.touches && ev.touches[0].clientX) || 0; }
+
+  function onMove(e2) {
+    const dx = getX(e2) - startX;
+    lastDx = dx;
+    if(Math.abs(dx) < 10) return;
+    dragging = true;
+    dragState.dragging = true;
+
+    const rowWidth = row.offsetWidth || 800;
+    const threshold = rowWidth / 3;
+
+    row.classList.remove('drag-left','drag-right');
+    const delFeed = document.getElementById('drag-del-'+id);
+    const pushFeed = document.getElementById('drag-push-'+id);
+    if(delFeed) delFeed.classList.remove('show');
+    if(pushFeed) pushFeed.classList.remove('show');
+
+    if(dx < -threshold) {
+      row.classList.add('drag-left');
+      if(delFeed) delFeed.classList.add('show');
+    } else if(dx > threshold) {
+      row.classList.add('drag-right');
+      if(pushFeed) pushFeed.classList.add('show');
+    }
+  }
+
+  function onUp(e2) {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onUp);
+
+    row.classList.remove('drag-left','drag-right');
+    const delFeed = document.getElementById('drag-del-'+id);
+    const pushFeed = document.getElementById('drag-push-'+id);
+    if(delFeed) delFeed.classList.remove('show');
+    if(pushFeed) pushFeed.classList.remove('show');
+
+    if(!dragging) { dragState=null; return; }
+
+    const rowWidth = row.offsetWidth || 800;
+    const threshold = rowWidth / 3;
+
+    if(lastDx < -threshold) {
+      const fakeEvt = { stopPropagation: ()=>{} };
+      deleteTask(id, fakeEvt);
+    } else if(lastDx > threshold) {
+      pushTask24(id);
+    }
+    dragState = null;
+  }
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+  document.addEventListener('touchmove', onMove, {passive:true});
+  document.addEventListener('touchend', onUp);
+}
+
+async function pushTask24(id) {
+  const t = tasks.find(t=>t.id===id);
+  if(!t || !t.due) return;
+  const parts = t.due.split('-');
+  const d = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
+  d.setDate(d.getDate()+1);
+  t.due = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  await saveTask(t);
+  render();
+}
+
+// ── EDIT PANEL ──
+function openEditPanel(id, e) {
+  e.stopPropagation();
+  e.preventDefault();
+  // Cancel any pending double-click-to-complete timer
+  if(clickTimers[id]) { clearTimeout(clickTimers[id]); delete clickTimers[id]; }
+  // Close any other open panels
+  document.querySelectorAll('.edit-panel.open').forEach(p=>{
+    if(p.id !== 'edit-panel-'+id) p.classList.remove('open');
+  });
+  const panel = document.getElementById('edit-panel-'+id);
+  if(panel) panel.classList.toggle('open');
+}
+
+function closeEditPanel(id, e) {
+  if(e) e.stopPropagation();
+  const panel = document.getElementById('edit-panel-'+id);
+  if(panel) panel.classList.remove('open');
+}
+
+async function saveEdit(id, e) {
+  e.stopPropagation();
+  const t = tasks.find(t=>t.id===id);
+  if(!t) return;
+  const newDate = document.getElementById('edit-date-'+id).value;
+  const newTime = document.getElementById('edit-time-'+id).value;
+  // Format time properly
+  let formattedTime = '';
+  if(newTime) {
+    const parts = newTime.split(':');
+    if(parts.length >= 2) formattedTime = parts[0].padStart(2,'0')+':'+parts[1].padStart(2,'0');
+  }
+  t.due = newDate;
+  t.time = formattedTime;
+  await saveTask(t);
+  closeEditPanel(id, e);
+  render();
 }
 
 // ── UTILS ──
